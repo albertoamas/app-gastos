@@ -1,0 +1,50 @@
+# .gitignore — Raíz del proyecto
+
+# Variables de entorno (¡nunca subir al repo!)
+.env
+.env.*
+!.env.example
+
+# Dependencias Node
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+
+# Build de producción del frontend
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+
+# Base de datos (si se mapeara un volumen local)
+postgres_data/
+data/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Entornos de desarrollo / IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Archivos de IA o planificación
+task.md
+implementation_plan.md
+walkthrough.md
+
+# Sistema Operativo
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
