@@ -183,7 +183,7 @@ El Container Registry es como un USB privado en la nube donde se guardan las im�
 
 La base de datos donde se guardan de forma permanente los usuarios y gastos de la aplicación.
 
-> **Nota importante:** En la suscripción Azure for Students de la UCB, PostgreSQL Flexible Server **solo funciona en la región Brazil South**. Si intentas otra región aparecerá un error de política. Este es el único recurso que va en esa región.
+> **Nota importante:** En la suscripción Azure for Students de la UCB, PostgreSQL Flexible Server tiene restricciones de región. Las regiones confirmadas que funcionan son **Brazil South** y **Chile Central**. Si intentas East US u otras regiones aparecerá un error de política. Si una región da error, prueba la otra.
 
 1. En la **barra de búsqueda** escribir: `azure database for postgresql`
 2. Hacer clic en **Azure Database for PostgreSQL flexible servers**
@@ -202,7 +202,7 @@ La base de datos donde se guardan de forma permanente los usuarios y gastos de l
 | Campo | Valor |
 |---|---|
 | ➤ Nombre del servidor | `gastos-db-server` |
-| ➤ Región | `(South America) Brazil South` |
+| ➤ Región | `(South America) Brazil South` o `(South America) Chile Central` |
 | ➤ Versión de PostgreSQL | `16` |
 | ➤ Tipo de carga de trabajo | `Desarrollo` |
 
@@ -270,6 +270,7 @@ $env:PATH += ";C:\Program Files\PostgreSQL\16\bin"
 
 # Ejecutar el script SQL (nota: el host usa el nombre nuevo gastos-db-server)
 psql "host=gastos-db-server.postgres.database.azure.com port=5432 dbname=gastos_db user=gastosadmin password=G4st0s#Prod2024! sslmode=require" -f backend/init.sql
+# Nota: el host es siempre gastos-db-server.postgres.database.azure.com sin importar la región elegida (Brazil South o Chile Central)
 ```
 
 Resultado esperado:
