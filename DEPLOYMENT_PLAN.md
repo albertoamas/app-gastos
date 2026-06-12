@@ -1,624 +1,693 @@
 # Plan de Despliegue — App-Gastos en Azure
 
-> **Estado:** Borrador para revisión  
-> **Objetivo:** Desplegar la aplicación en Azure con Docker y CI/CD automatizado  
-> **Presupuesto estimado:** ~$34/mes (dentro del crédito de $100)
+> **Repositorio:** https://github.com/albertoamas/app-gastos
+> **Suscripción Azure:** Azure for Students (`dffcc809-c0d1-4eb2-bf73-850636482a19`)
+> **Fecha:** Junio 2026
 
 ---
 
-## 1. Arquitectura Propuesta
+## ¿Por qué esta arquitectura?
+
+La aplicación tiene tres servicios: frontend (React), backend (Node.js) y base de datos (PostgreSQL). Cada uno tiene su propio `Dockerfile`, lo que significa que se puede empaquetar como imagen Docker y desplegar en la nube de forma independiente.
+
+En vez de usar servicios separados para cada capa (y pagar por cada uno), usamos **Azure Container Apps**: un servicio de Azure que corre contenedores Docker directamente, con un tier gratuito generoso. Así todo el despliegue es 100% basado en Docker, coherente con el `docker-compose.yml` que ya existe para desarrollo local.
+
+---
+
+## Arquitectura final
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         GITHUB                                  │
-│  Repositorio App-Gastos                                         │
-│  push a main ──→ GitHub Actions CI/CD                           │
-└──────────────────┬──────────────────────────────────────────────┘
-                   │
-        ┌──────────┴──────────┐
-        ▼                     ▼
-┌───────────────┐    ┌────────────────────┐
-│ Build Backend │    │  Build Frontend    │
-│ Docker image  │    │  (npm run build    │
-│               │    │  con VITE_API_URL) │
-└───────┬───────┘    └────────┬───────────┘
-        │                     │
-        ▼                     ▼
-┌───────────────┐    ┌────────────────────────────┐
-│ Azure         │    │ Azure Static Web Apps      │
-│ Container     │    │ (FREE)                     │
-│ Registry      │    │ gastos-app.azurestaticapps │
-│ (Basic ~$5/m) │    │ .net                       │
-└───────┬───────┘    └────────────────────────────┘
-        │                     ▲
-        ▼                     │ VITE_API_URL apunta a ↓
-┌───────────────────────────────────────────────────┐
-│ Azure App Service (B1 Linux) ~$13/mes             │
-│ gastos-backend.azurewebsites.net                  │
-│ [contenedor Docker: gastos-backend:latest]        │
-└───────────────────────┬───────────────────────────┘
-                        │ Conexión SSL PostgreSQL
-                        ▼
-┌───────────────────────────────────────────────────┐
-│ Azure Database for PostgreSQL Flexible Server     │
-│ (Burstable B1ms) ~$16/mes                         │
-│ gastos-db.postgres.database.azure.com             │
-└───────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Desarrollador hace: git push origin main                        │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  GitHub Actions CI/CD (automático)                               │
+│                                                                  │
+│  deploy-backend.yml          deploy-frontend.yml                 │
+│  ┌─────────────────────┐     ┌──────────────────────────────┐    │
+│  │ 1. docker build     │     │ 1. docker build              │    │
+│  │    backend/         │     │    frontend/ con             │    │
+│  │ 2. docker push ACR  │     │    VITE_API_URL              │    │
+│  │ 3. az containerapp  │     │ 2. docker push ACR           │    │
+│  │    update           │     │ 3. az containerapp update    │    │
+│  └─────────────────────┘     └──────────────────────────────┘    │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Azure Container Registry (gastosprodacr.azurecr.io)             │
+│  Almacena las imágenes Docker                                     │
+│  ┌──────────────────────┐  ┌──────────────────────────────────┐  │
+│  │ gastos-backend:v1.0  │  │ gastos-frontend:v1.0            │  │
+│  └──────────────────────┘  └──────────────────────────────────┘  │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ pull images
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Azure Container Apps Environment (gastos-env)                   │
+│  Red privada compartida entre los contenedores                   │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐     │
+│  │ gastos-frontend (nginx + React build)                   │     │
+│  │ Puerto 80 → HTTPS público                               │     │
+│  │ URL: https://gastos-frontend.<id>.eastus.azurecontainer │     │
+│  │ apps.io                                                 │     │
+│  └─────────────────────────────────────────────────────────┘     │
+│                         │ llama a la API                         │
+│  ┌─────────────────────────────────────────────────────────┐     │
+│  │ gastos-backend (Node.js Express)                        │     │
+│  │ Puerto 3001 → HTTPS público                             │     │
+│  │ URL: https://gastos-backend.<id>.eastus.azurecontainer  │     │
+│  │ apps.io                                                 │     │
+│  └─────────────────────────────────────────────────────────┘     │
+│                         │ conexión SSL PostgreSQL                │
+└─────────────────────────┼────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Azure Database for PostgreSQL Flexible Server                   │
+│  (gastos-pg-brs — región: Brazil South)                          │
+│  gastos-pg-brs.postgres.database.azure.com:5432                  │
+│  Base de datos: gastos_db                                        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**Servicios Azure utilizados:**
+---
 
-| Servicio | Tier | Costo estimado/mes |
+## ¿Qué hace cada pieza?
+
+| Servicio | Qué es | Para qué sirve |
+|---|---|---|
+| **Azure Container Registry (ACR)** | Repositorio privado de imágenes Docker | Guarda las imágenes del backend y frontend que construye GitHub Actions |
+| **Azure Container Apps** | Servicio para correr contenedores en la nube | Ejecuta el backend y el frontend como contenedores Docker |
+| **Azure PostgreSQL Flexible Server** | Base de datos administrada | Almacena los usuarios y gastos. Azure gestiona backups y actualizaciones |
+| **GitHub Actions** | CI/CD automatizado | Detecta cambios en el código, construye las imágenes y las despliega en Azure |
+
+---
+
+## Costos estimados
+
+| Servicio | Tier | $/mes |
 |---|---|---|
 | Azure Container Registry | Basic | ~$5 |
-| Azure App Service | B1 Linux (1 vCPU, 1.75 GB RAM) | ~$13 |
-| Azure Database for PostgreSQL Flexible Server | Burstable B1ms + 32 GB storage | ~$16 |
-| Azure Static Web Apps | Free | $0 |
-| **Total estimado** | | **~$34/mes** |
+| Azure Container Apps | Free tier (uso bajo) | ~$0-3 |
+| Azure PostgreSQL Flexible Server | Burstable B1ms (Brazil South) | ~$16 |
+| **Total** | | **~$21-24/mes** |
 
-> Con $100 de crédito tenés aproximadamente **2.5 meses** de operación continua.
-
----
-
-## 2. Prerrequisitos
-
-Antes de comenzar, asegurate de tener instalado y configurado:
-
-- [ ] **Azure CLI** — [Descargar](https://docs.microsoft.com/cli/azure/install-azure-cli)  
-  Verificar: `az --version`
-- [ ] **Docker Desktop** — Ya debería estar instalado (tenés Dockerfiles)  
-  Verificar: `docker --version`
-- [ ] **Git** y cuenta en **GitHub** con el repositorio de la app subido
-- [ ] Cuenta Azure con el crédito de $100 activado
-- [ ] Node.js 20+ (para pruebas locales)
+Con $100 de crédito: aproximadamente **4 meses** de operación.
 
 ---
 
-## 3. Fase 1: Preparar el Código
+## Nombres de recursos (ya definidos)
 
-Estos cambios son necesarios antes de desplegar. **Hacer commit y push a GitHub después.**
-
-### 3.1 — Agregar soporte SSL en `backend/db.js`
-
-Azure Database for PostgreSQL requiere conexión SSL. Modificar `backend/db.js`:
-
-```javascript
-// db.js — Pool de conexión a PostgreSQL
-const { Pool } = require('pg');
-
-const pool = new Pool({
-  host:     process.env.PGHOST     || 'localhost',
-  port:     process.env.PGPORT     || 5432,
-  user:     process.env.PGUSER     || 'gastos_user',
-  password: process.env.PGPASSWORD || 'gastos_pass',
-  database: process.env.PGDATABASE || 'gastos_db',
-  // SSL requerido por Azure PostgreSQL en producción
-  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
-});
-
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error('❌ Error conectando a PostgreSQL:', err.message);
-  } else {
-    console.log('✅ Conectado a PostgreSQL');
-    release();
-  }
-});
-
-module.exports = pool;
-```
-
-### 3.2 — Crear el archivo `.github/workflows/deploy-backend.yml`
-
-Crear la carpeta `.github/workflows/` y el archivo:
-
-```yaml
-name: Deploy Backend
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-backend.yml'
-
-env:
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  IMAGE_NAME: gastos-backend
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Login a Azure
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Login a Azure Container Registry
-        run: az acr login --name ${{ secrets.ACR_NAME }}
-
-      - name: Build y push imagen Docker
-        run: |
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-                       -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest \
-                       ./backend
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
-
-      - name: Deploy a Azure App Service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-```
-
-### 3.3 — Crear el archivo `.github/workflows/deploy-frontend.yml`
-
-```yaml
-name: Deploy Frontend
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/deploy-frontend.yml'
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    name: Build y Deploy Frontend
-
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Build Frontend
-        working-directory: ./frontend
-        run: |
-          npm install
-          npm run build
-        env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
-
-      - name: Deploy a Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "frontend"
-          output_location: "dist"
-          skip_app_build: true
-```
-
-### 3.4 — Commit y push
-
-```bash
-git add backend/db.js .github/workflows/
-git commit -m "feat: add Azure deployment workflows and SSL support for PostgreSQL"
-git push origin main
-```
-
----
-
-## 4. Fase 2: Crear la Infraestructura en Azure
-
-Ejecutar estos comandos **una sola vez** para crear todos los recursos.
-
-### 4.1 — Variables de entorno para los comandos
-
-Copiar y pegar este bloque completo en tu terminal. Todos los nombres ya están definidos:
-
-```bash
-RESOURCE_GROUP="rg-gastos-prod"
-LOCATION="eastus"
-ACR_NAME="gastosprodacr"
-PG_SERVER="gastos-pg-prod"
-PG_ADMIN="gastosadmin"
-PG_PASSWORD="G4st0s#Prod2024!"
-PG_DATABASE="gastos_db"
-APP_SERVICE_PLAN="asp-gastos-linux"
-WEBAPP_NAME="gastos-backend-svc"
-SWA_NAME="gastos-frontend-swa"
-JWT_SECRET="j8Kx2mNpQ5vRwY9zAcFhLtBuDeGiJoMs"
-```
-
-> **Guardá estos valores** (especialmente `PG_PASSWORD` y `JWT_SECRET`), los necesitarás en varios pasos.
-
-### 4.2 — Login a Azure y crear Resource Group
-
-```bash
-az login
-
-az group create \
-  --name $RESOURCE_GROUP \
-  --location $LOCATION
-```
-
-### 4.3 — Crear Azure Container Registry
-
-```bash
-az acr create \
-  --resource-group $RESOURCE_GROUP \
-  --name $ACR_NAME \
-  --sku Basic \
-  --admin-enabled true
-
-# Guardar las credenciales (las necesitarás para los secrets de GitHub)
-az acr credential show --name $ACR_NAME
-# Anota: loginServer, username y password
-```
-
-### 4.4 — Crear Azure Database for PostgreSQL Flexible Server
-
-```bash
-az postgres flexible-server create \
-  --resource-group $RESOURCE_GROUP \
-  --name $PG_SERVER \
-  --location $LOCATION \
-  --admin-user $PG_ADMIN \
-  --admin-password $PG_PASSWORD \
-  --sku-name Standard_B1ms \
-  --tier Burstable \
-  --version 16 \
-  --storage-size 32 \
-  --yes
-
-# Crear la base de datos
-az postgres flexible-server db create \
-  --resource-group $RESOURCE_GROUP \
-  --server-name $PG_SERVER \
-  --database-name $PG_DATABASE
-
-# Permitir que los servicios Azure se conecten (habilita conexiones desde App Service)
-az postgres flexible-server firewall-rule create \
-  --resource-group $RESOURCE_GROUP \
-  --name $PG_SERVER \
-  --rule-name AllowAllAzureServices \
-  --start-ip-address 0.0.0.0 \
-  --end-ip-address 0.0.0.0
-```
-
-### 4.5 — Inicializar el esquema de la base de datos
-
-```bash
-# Habilitar tu IP actual para poder correr init.sql desde tu máquina
-MY_IP=$(curl -s https://api.ipify.org)
-
-az postgres flexible-server firewall-rule create \
-  --resource-group $RESOURCE_GROUP \
-  --name $PG_SERVER \
-  --rule-name AllowMyIP \
-  --start-ip-address $MY_IP \
-  --end-ip-address $MY_IP
-
-# Correr el script de inicialización
-psql "host=$PG_SERVER.postgres.database.azure.com \
-      port=5432 \
-      dbname=$PG_DATABASE \
-      user=$PG_ADMIN \
-      password=$PG_PASSWORD \
-      sslmode=require" \
-  -f backend/init.sql
-
-# Verificar que las tablas se crearon
-psql "host=$PG_SERVER.postgres.database.azure.com \
-      port=5432 \
-      dbname=$PG_DATABASE \
-      user=$PG_ADMIN \
-      password=$PG_PASSWORD \
-      sslmode=require" \
-  -c "\dt"
-# Deberías ver: users y gastos
-```
-
-### 4.6 — Crear Azure App Service y Web App (backend)
-
-```bash
-# Plan de App Service (B1 Linux)
-az appservice plan create \
-  --resource-group $RESOURCE_GROUP \
-  --name $APP_SERVICE_PLAN \
-  --is-linux \
-  --sku B1
-
-# Web App configurada para usar contenedor Docker desde ACR
-ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
-
-az webapp create \
-  --resource-group $RESOURCE_GROUP \
-  --plan $APP_SERVICE_PLAN \
-  --name $WEBAPP_NAME \
-  --deployment-container-image-name $ACR_LOGIN_SERVER/gastos-backend:latest
-
-# Configurar variables de entorno del backend en App Service
-az webapp config appsettings set \
-  --resource-group $RESOURCE_GROUP \
-  --name $WEBAPP_NAME \
-  --settings \
-    PORT=3001 \
-    WEBSITES_PORT=3001 \
-    PGHOST="$PG_SERVER.postgres.database.azure.com" \
-    PGPORT=5432 \
-    PGUSER=$PG_ADMIN \
-    PGPASSWORD=$PG_PASSWORD \
-    PGDATABASE=$PG_DATABASE \
-    PGSSL=true \
-    JWT_SECRET=$JWT_SECRET \
-    NODE_ENV=production
-
-# Configurar credenciales de ACR para que App Service pueda hacer pull de la imagen
-ACR_USERNAME=$(az acr credential show --name $ACR_NAME --query username -o tsv)
-ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv)
-
-az webapp config container set \
-  --resource-group $RESOURCE_GROUP \
-  --name $WEBAPP_NAME \
-  --docker-registry-server-url "https://$ACR_LOGIN_SERVER" \
-  --docker-registry-server-user $ACR_USERNAME \
-  --docker-registry-server-password $ACR_PASSWORD
-
-# Habilitar logs de contenedor (útil para debugging)
-az webapp log config \
-  --resource-group $RESOURCE_GROUP \
-  --name $WEBAPP_NAME \
-  --docker-container-logging filesystem
-```
-
-### 4.7 — Crear Azure Static Web Apps (frontend)
-
-```bash
-# Crear SWA conectado al repositorio de GitHub
-# Reemplazá <TU_USUARIO_GITHUB> y <TU_REPO> con tus datos reales
-az staticwebapp create \
-  --resource-group $RESOURCE_GROUP \
-  --name $SWA_NAME \
-  --source "https://github.com/<TU_USUARIO_GITHUB>/App-Gastos" \
-  --branch main \
-  --app-location "frontend" \
-  --output-location "dist" \
-  --login-with-github
-
-# Obtener el token de deployment (necesario para GitHub Secrets)
-az staticwebapp secrets list \
-  --name $SWA_NAME \
-  --query "properties.apiKey" -o tsv
-# Guardar este token como AZURE_STATIC_WEB_APPS_API_TOKEN en GitHub Secrets
-```
-
----
-
-## 5. Fase 3: Configurar Secrets en GitHub
-
-En tu repositorio de GitHub ir a **Settings → Secrets and variables → Actions → New repository secret** y agregar:
-
-| Secret Name | Valor | Cómo obtenerlo |
+| Recurso | Nombre | Endpoint |
 |---|---|---|
-| `AZURE_CREDENTIALS` | JSON del service principal | Ver paso 5.1 abajo |
-| `ACR_NAME` | Ej: `gastosacr` | El nombre que elegiste |
-| `ACR_LOGIN_SERVER` | Ej: `gastosacr.azurecr.io` | `az acr show --name $ACR_NAME --query loginServer -o tsv` |
-| `AZURE_WEBAPP_NAME` | Ej: `gastos-backend-api` | El nombre que elegiste |
-| `VITE_API_URL` | Ej: `https://gastos-backend-api.azurewebsites.net` | La URL de tu App Service |
-| `AZURE_STATIC_WEB_APPS_API_TOKEN` | Token SWA | Obtenido en el paso 4.7 |
+| Resource Group | `rg-gastos-prod` | — |
+| Container Registry | `gastosprodacr` | `gastosprodacr.azurecr.io` |
+| PostgreSQL Server | `gastos-pg-brs` | `gastos-pg-brs.postgres.database.azure.com` |
+| PostgreSQL Admin | `gastosadmin` | — |
+| PostgreSQL Password | `G4st0s#Prod2024!` | — |
+| PostgreSQL Database | `gastos_db` | — |
+| Container Apps Environment | `gastos-env` | — |
+| Backend Container App | `gastos-backend` | `https://gastos-backend.<id>.eastus.azurecontainerapps.io` |
+| Frontend Container App | `gastos-frontend` | `https://gastos-frontend.<id>.eastus.azurecontainerapps.io` |
+| JWT Secret | `j8Kx2mNpQ5vRwY9zAcFhLtBuDeGiJoMs` | — |
 
-### 5.1 — Crear Service Principal para GitHub Actions
+---
 
-```bash
-# Obtener el ID de la suscripción
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+## FASE 0 — Instalar herramientas
 
-# Crear el service principal con permisos de Contributor en el resource group
-az ad sp create-for-rbac \
-  --name "github-actions-gastos" \
-  --role contributor \
-  --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP \
+### Paso 0.1 — Instalar Azure CLI
+
+Abrir **PowerShell como Administrador** y ejecutar:
+
+```powershell
+winget install --id Microsoft.AzureCLI --silent --accept-package-agreements --accept-source-agreements
+```
+
+Esperar a que termine (descarga ~63 MB). Al finalizar debe decir `Instalado correctamente`.
+
+**Cerrar la terminal y abrir una nueva.** Verificar:
+
+```powershell
+az --version
+```
+
+Debe mostrar `azure-cli 2.x.x` o superior.
+
+---
+
+### Paso 0.2 — Instalar Docker Desktop
+
+Docker construye las imágenes de los contenedores que se subirán a Azure.
+
+1. Descargar desde: https://www.docker.com/products/docker-desktop/
+2. Instalar y reiniciar si lo pide
+3. Abrir Docker Desktop y esperar el ícono verde de la ballena
+
+Verificar:
+```powershell
+docker --version
+```
+
+---
+
+### Paso 0.3 — Instalar cliente PostgreSQL (psql)
+
+Se usa una sola vez para ejecutar el script que crea las tablas en la base de datos.
+
+```powershell
+winget install --id PostgreSQL.PostgreSQL.16 --silent --accept-package-agreements --accept-source-agreements
+```
+
+Cerrar y abrir terminal nueva. Verificar:
+```powershell
+psql --version
+```
+
+---
+
+### Paso 0.4 — Clonar el repositorio
+
+```powershell
+git clone https://github.com/albertoamas/app-gastos.git
+cd app-gastos
+```
+
+---
+
+## FASE 1 — Login en Azure
+
+### Paso 1.1 — Iniciar sesión
+
+```powershell
+az login
+```
+
+Se abre el navegador. Iniciar sesión con la cuenta Azure que tiene los créditos. Al volver a la terminal, aparece la lista de suscripciones. Presionar **Enter** para confirmar la default.
+
+Verificar que quedó activa:
+```powershell
+az account show --query "{Suscripcion:name, Estado:state}" --output table
+```
+
+Resultado esperado:
+```
+Suscripcion         Estado
+------------------  --------
+Azure for Students  Enabled
+```
+
+---
+
+### Paso 1.2 — Registrar proveedores de Azure
+
+La primera vez hay que habilitar los servicios que se van a usar. Ejecutar cada uno y esperar el prompt `PS>`:
+
+```powershell
+az provider register --namespace Microsoft.ContainerRegistry --wait
+az provider register --namespace Microsoft.App --wait
+az provider register --namespace Microsoft.DBforPostgreSQL --wait
+az provider register --namespace Microsoft.OperationalInsights --wait
+```
+
+Verificar que todos quedaron registrados:
+```powershell
+az provider show --namespace Microsoft.ContainerRegistry --query "registrationState" -o tsv
+az provider show --namespace Microsoft.App --query "registrationState" -o tsv
+az provider show --namespace Microsoft.DBforPostgreSQL --query "registrationState" -o tsv
+az provider show --namespace Microsoft.OperationalInsights --query "registrationState" -o tsv
+```
+
+Los cuatro deben responder `Registered`.
+
+---
+
+## FASE 2 — Crear infraestructura en Azure
+
+> Todos los recursos quedan agrupados en `rg-gastos-prod` para poder administrarlos y eliminarlos juntos.
+
+### Paso 2.1 — Resource Group ✅ YA CREADO
+
+El Resource Group es el contenedor lógico de todos los recursos.
+
+```powershell
+az group create `
+  --name "rg-gastos-prod" `
+  --location "eastus" `
+  --output table
+```
+
+Resultado esperado:
+```
+Location    Name
+----------  --------------
+eastus      rg-gastos-prod
+```
+
+---
+
+### Paso 2.2 — Azure Container Registry (ACR) ✅ YA CREADO
+
+El ACR es el repositorio privado donde se guardan las imágenes Docker. GitHub Actions las sube aquí y Azure Container Apps las descarga desde aquí.
+
+```powershell
+az acr create `
+  --resource-group "rg-gastos-prod" `
+  --name "gastosprodacr" `
+  --sku Basic `
+  --admin-enabled true `
+  --output table
+```
+
+Resultado esperado:
+```
+NAME           RESOURCE GROUP   LOCATION   SKU    LOGIN SERVER
+gastosprodacr  rg-gastos-prod   eastus     Basic  gastosprodacr.azurecr.io
+```
+
+Ver las credenciales del ACR (se usan más adelante como GitHub Secrets):
+```powershell
+az acr credential show --name "gastosprodacr" --output table
+```
+
+Guardar el `USERNAME` y el primer `PASSWORD`.
+
+---
+
+### Paso 2.3 — Azure Database for PostgreSQL ✅ YA CREADO
+
+La base de datos administrada corre en la región **Brazil South** (única habilitada para este servicio en la suscripción Azure for Students de la UCB).
+
+> **Nota:** La región del servidor PostgreSQL es diferente a la del resto de recursos. Esto es normal — Azure permite que recursos de un mismo Resource Group estén en distintas regiones. La latencia entre Brazil South y East US es de ~100ms, aceptable para un proyecto universitario.
+
+```powershell
+az postgres flexible-server create `
+  --resource-group "rg-gastos-prod" `
+  --name "gastos-pg-brs" `
+  --location "brazilsouth" `
+  --admin-user "gastosadmin" `
+  --admin-password "G4st0s#Prod2024!" `
+  --sku-name "Standard_B1ms" `
+  --tier "Burstable" `
+  --version "16" `
+  --storage-size 32 `
+  --yes
+```
+
+Este comando tarda ~5 minutos. Al terminar:
+```powershell
+az postgres flexible-server show `
+  --resource-group "rg-gastos-prod" `
+  --name "gastos-pg-brs" `
+  --query "{Nombre:name, Estado:state, Host:fullyQualifiedDomainName}" `
+  --output table
+```
+
+Resultado esperado:
+```
+Nombre         Estado    Host
+-------------  --------  -----------------------------------------
+gastos-pg-brs  Ready     gastos-pg-brs.postgres.database.azure.com
+```
+
+Crear la base de datos dentro del servidor:
+```powershell
+az postgres flexible-server db create `
+  --resource-group "rg-gastos-prod" `
+  --server-name "gastos-pg-brs" `
+  --name "gastos_db"
+```
+
+---
+
+### Paso 2.4 — Configurar firewall de PostgreSQL
+
+Azure PostgreSQL bloquea todas las conexiones por defecto. Hay que abrir dos reglas:
+
+**Regla 1:** Permitir que Azure Container Apps se conecte (IPs internas de Azure):
+```powershell
+az postgres flexible-server firewall-rule create `
+  --resource-group "rg-gastos-prod" `
+  --server-name "gastos-pg-brs" `
+  --name "AllowAzureServices" `
+  --start-ip-address "0.0.0.0" `
+  --end-ip-address "0.0.0.0"
+```
+
+**Regla 2:** Permitir la IP del equipo actual para poder ejecutar el script de inicialización:
+```powershell
+$MY_IP = (Invoke-RestMethod -Uri "https://api.ipify.org")
+Write-Output "Tu IP publica es: $MY_IP"
+
+az postgres flexible-server firewall-rule create `
+  --resource-group "rg-gastos-prod" `
+  --server-name "gastos-pg-brs" `
+  --name "AllowMyIP" `
+  --start-ip-address $MY_IP `
+  --end-ip-address $MY_IP
+```
+
+---
+
+### Paso 2.5 — Inicializar el esquema de la base de datos
+
+El archivo `backend/init.sql` crea las tablas `users` y `gastos`. Se ejecuta una sola vez:
+
+```powershell
+cd app-gastos
+
+psql "host=gastos-pg-brs.postgres.database.azure.com port=5432 dbname=gastos_db user=gastosadmin password=G4st0s#Prod2024! sslmode=require" -f backend/init.sql
+```
+
+Resultado esperado:
+```
+CREATE TABLE
+CREATE TABLE
+```
+
+Verificar que las tablas se crearon:
+```powershell
+psql "host=gastos-pg-brs.postgres.database.azure.com port=5432 dbname=gastos_db user=gastosadmin password=G4st0s#Prod2024! sslmode=require" -c "\dt"
+```
+
+Resultado esperado:
+```
+        List of relations
+ Schema | Name   | Type  |    Owner
+--------+--------+-------+--------------
+ public | gastos | table | gastosadmin
+ public | users  | table | gastosadmin
+```
+
+---
+
+### Paso 2.6 — Container Apps Environment
+
+El Environment es la red virtual compartida donde van a correr todos los contenedores. Es como la red `gastos_net` del `docker-compose.yml` local.
+
+```powershell
+az containerapp env create `
+  --name "gastos-env" `
+  --resource-group "rg-gastos-prod" `
+  --location "eastus" `
+  --output table
+```
+
+Este comando tarda ~2 minutos. Resultado esperado:
+```
+Name        Location    ResourceGroup    ProvisioningState
+----------  ----------  ---------------  -------------------
+gastos-env  East US     rg-gastos-prod   Succeeded
+```
+
+---
+
+### Paso 2.7 — Build y push de imágenes Docker al ACR
+
+Antes de crear los Container Apps, las imágenes tienen que existir en el ACR.
+
+Login al ACR:
+```powershell
+az acr login --name "gastosprodacr"
+```
+
+**Build y push del backend:**
+```powershell
+docker build -t "gastosprodacr.azurecr.io/gastos-backend:latest" ./backend
+docker push "gastosprodacr.azurecr.io/gastos-backend:latest"
+```
+
+**Build y push del frontend** (con la URL del backend que vendrá del Paso 2.8):
+
+> Este paso se completa DESPUÉS de crear el backend Container App en el Paso 2.8, cuando ya tenemos la URL real del backend.
+
+---
+
+### Paso 2.8 — Backend Container App
+
+Crea el contenedor del backend usando la imagen recién subida al ACR:
+
+```powershell
+$ACR_PASSWORD = az acr credential show --name "gastosprodacr" --query "passwords[0].value" -o tsv
+
+az containerapp create `
+  --name "gastos-backend" `
+  --resource-group "rg-gastos-prod" `
+  --environment "gastos-env" `
+  --image "gastosprodacr.azurecr.io/gastos-backend:latest" `
+  --registry-server "gastosprodacr.azurecr.io" `
+  --registry-username "gastosprodacr" `
+  --registry-password $ACR_PASSWORD `
+  --target-port 3001 `
+  --ingress external `
+  --min-replicas 1 `
+  --max-replicas 1 `
+  --env-vars `
+    "PORT=3001" `
+    "PGHOST=gastos-pg-brs.postgres.database.azure.com" `
+    "PGPORT=5432" `
+    "PGUSER=gastosadmin" `
+    "PGPASSWORD=G4st0s#Prod2024!" `
+    "PGDATABASE=gastos_db" `
+    "PGSSL=true" `
+    "JWT_SECRET=j8Kx2mNpQ5vRwY9zAcFhLtBuDeGiJoMs" `
+    "NODE_ENV=production" `
+  --output table
+```
+
+Obtener la URL del backend (la necesitamos para construir el frontend):
+```powershell
+$BACKEND_URL = az containerapp show `
+  --name "gastos-backend" `
+  --resource-group "rg-gastos-prod" `
+  --query "properties.configuration.ingress.fqdn" -o tsv
+
+Write-Output "URL del backend: https://$BACKEND_URL"
+```
+
+**Guardar esta URL** — la necesitás en el siguiente paso y como GitHub Secret.
+
+Verificar que el backend responde:
+```powershell
+Invoke-RestMethod -Uri "https://$BACKEND_URL/"
+```
+
+Resultado esperado:
+```
+status message
+------ --------------------------------
+ok     API de Control de Gastos ✅
+```
+
+---
+
+### Paso 2.9 — Frontend Container App
+
+Ahora que tenemos la URL del backend, construimos la imagen del frontend con esa URL "horneada" en el build:
+
+```powershell
+# Usar la variable $BACKEND_URL del paso anterior
+docker build `
+  --build-arg VITE_API_URL="https://$BACKEND_URL" `
+  -t "gastosprodacr.azurecr.io/gastos-frontend:latest" `
+  ./frontend
+
+docker push "gastosprodacr.azurecr.io/gastos-frontend:latest"
+```
+
+Crear el Container App del frontend:
+```powershell
+az containerapp create `
+  --name "gastos-frontend" `
+  --resource-group "rg-gastos-prod" `
+  --environment "gastos-env" `
+  --image "gastosprodacr.azurecr.io/gastos-frontend:latest" `
+  --registry-server "gastosprodacr.azurecr.io" `
+  --registry-username "gastosprodacr" `
+  --registry-password $ACR_PASSWORD `
+  --target-port 80 `
+  --ingress external `
+  --min-replicas 1 `
+  --max-replicas 1 `
+  --output table
+```
+
+Obtener la URL del frontend:
+```powershell
+$FRONTEND_URL = az containerapp show `
+  --name "gastos-frontend" `
+  --resource-group "rg-gastos-prod" `
+  --query "properties.configuration.ingress.fqdn" -o tsv
+
+Write-Output "URL del frontend: https://$FRONTEND_URL"
+```
+
+---
+
+## FASE 3 — Configurar Secrets en GitHub
+
+Los secrets son variables privadas que GitHub Actions usa para autenticarse en Azure y construir las imágenes sin exponer contraseñas en el código.
+
+Ir a: **https://github.com/albertoamas/app-gastos/settings/secrets/actions**
+
+Hacer clic en **New repository secret** y agregar cada uno:
+
+| Nombre del Secret | Valor | Para qué se usa |
+|---|---|---|
+| `AZURE_CREDENTIALS` | JSON del service principal (Paso 3.1) | Autenticar GitHub Actions en Azure |
+| `ACR_NAME` | `gastosprodacr` | Login al Container Registry |
+| `ACR_LOGIN_SERVER` | `gastosprodacr.azurecr.io` | Prefijo de las imágenes Docker |
+| `VITE_API_URL` | `https://gastos-backend.<id>.eastus.azurecontainerapps.io` | URL del backend para el build del frontend |
+
+---
+
+### Paso 3.1 — Crear Service Principal
+
+El Service Principal es una identidad de Azure que GitHub Actions usa para hacer deployments de forma segura sin necesitar una contraseña de usuario real.
+
+```powershell
+az ad sp create-for-rbac `
+  --name "github-actions-gastos" `
+  --role contributor `
+  --scopes /subscriptions/dffcc809-c0d1-4eb2-bf73-850636482a19/resourceGroups/rg-gastos-prod `
   --sdk-auth
 ```
 
-El comando devuelve un JSON. Copiar **todo el JSON** (incluyendo las llaves `{}`) como valor del secret `AZURE_CREDENTIALS`.
-
+El comando devuelve un JSON. Copiar **todo el bloque** (incluyendo `{` y `}`) como valor del secret `AZURE_CREDENTIALS`:
 ```json
 {
   "clientId": "...",
   "clientSecret": "...",
-  "subscriptionId": "...",
+  "subscriptionId": "dffcc809-c0d1-4eb2-bf73-850636482a19",
   "tenantId": "...",
   ...
 }
 ```
 
-### 5.2 — Agregar permisos para hacer push a ACR
+Dar permisos al Service Principal para hacer push al ACR:
+```powershell
+$SP_ID = az ad sp list --display-name "github-actions-gastos" --query "[0].appId" -o tsv
+$ACR_ID = az acr show --name "gastosprodacr" --query "id" -o tsv
 
-```bash
-# El service principal también necesita permisos sobre ACR
-ACR_RESOURCE_ID=$(az acr show --name $ACR_NAME --query id -o tsv)
-SP_APP_ID=$(az ad sp list --display-name "github-actions-gastos" --query "[0].appId" -o tsv)
+az role assignment create `
+  --assignee $SP_ID `
+  --role AcrPush `
+  --scope $ACR_ID
+```
 
-az role assignment create \
-  --assignee $SP_APP_ID \
-  --role AcrPush \
-  --scope $ACR_RESOURCE_ID
+También necesita permisos para actualizar Container Apps:
+```powershell
+az role assignment create `
+  --assignee $SP_ID `
+  --role "Contributor" `
+  --scope /subscriptions/dffcc809-c0d1-4eb2-bf73-850636482a19/resourceGroups/rg-gastos-prod
 ```
 
 ---
 
-## 6. Fase 4: Primer Despliegue Manual (Validación)
+## FASE 4 — CI/CD con GitHub Actions
 
-Antes de que el CI/CD tome el control, hacer un primer deploy manual para verificar que todo funciona.
+Los workflows ya están en el repositorio en `.github/workflows/`. Se activan automáticamente en cada `git push`.
 
-### 6.1 — Build y push imagen del backend
+### Cómo funciona `deploy-backend.yml`
 
-```bash
-# Login a ACR
-az acr login --name $ACR_NAME
+Se activa cuando hay cambios en `backend/`:
+1. Hace login en Azure con el Service Principal
+2. Hace login al ACR
+3. Construye la imagen Docker del backend con el tag del commit (`${{ github.sha }}`)
+4. Sube la imagen al ACR con dos tags: el del commit y `latest`
+5. Actualiza el Container App `gastos-backend` para usar la nueva imagen
 
-# Build de la imagen
-ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+### Cómo funciona `deploy-frontend.yml`
 
-docker build -t $ACR_LOGIN_SERVER/gastos-backend:latest ./backend
+Se activa cuando hay cambios en `frontend/`:
+1. Hace login en Azure
+2. Hace login al ACR
+3. Construye la imagen Docker del frontend, pasando `VITE_API_URL` como build argument
+4. Sube la imagen al ACR
+5. Actualiza el Container App `gastos-frontend`
 
-# Push a ACR
-docker push $ACR_LOGIN_SERVER/gastos-backend:latest
-
-# Forzar restart de App Service para que tome la nueva imagen
-az webapp restart --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME
-```
-
-### 6.2 — Verificar que el backend está operativo
-
-```bash
-# Esperar ~1-2 minutos y luego probar el health check
-curl https://$WEBAPP_NAME.azurewebsites.net/
-# Respuesta esperada: {"status":"ok","message":"API de Control de Gastos ✅"}
-
-# Probar el endpoint de registro
-curl -X POST https://$WEBAPP_NAME.azurewebsites.net/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"nombre":"Test User","email":"test@test.com","password":"123456"}'
-# Respuesta esperada: {"token":"...","user":{...}}
-```
-
-### 6.3 — Verificar logs si hay problemas
-
-```bash
-# Ver logs en tiempo real del contenedor
-az webapp log tail \
-  --resource-group $RESOURCE_GROUP \
-  --name $WEBAPP_NAME
-```
-
-### 6.4 — Primer deploy del frontend
-
-Una vez verificado el backend, hacer push al repositorio. El workflow de GitHub Actions se encargará del frontend. Si querés hacerlo manualmente:
-
-```bash
-cd frontend
-VITE_API_URL=https://$WEBAPP_NAME.azurewebsites.net npm run build
-
-# Instalar SWA CLI si no lo tenés
-npm install -g @azure/static-web-apps-cli
-
-# Deploy manual
-swa deploy ./dist \
-  --deployment-token $(az staticwebapp secrets list --name $SWA_NAME --query "properties.apiKey" -o tsv)
-```
+> La URL del backend (`VITE_API_URL`) está guardada como GitHub Secret para que el workflow la use al construir la imagen.
 
 ---
 
-## 7. Fase 5: Verificación End-to-End
+## FASE 5 — Verificación end-to-end
 
-Con ambos servicios desplegados, probar el flujo completo:
+Abrir el frontend en el navegador con la URL obtenida en el Paso 2.9.
 
-1. **Abrir el frontend**: `https://<SWA_NAME>.azurestaticapps.net`
-2. **Registro**: Crear una cuenta nueva
-3. **Login**: Iniciar sesión con la cuenta creada
-4. **Dashboard**: Verificar que carga sin errores
-5. **Crear gasto**: Agregar un gasto y verificar que aparece en la lista
-6. **Historial**: Verificar que el filtro por mes funciona
-7. **Eliminar gasto**: Verificar que la eliminación funciona
-8. **Logout y re-login**: Verificar persistencia de datos
-
-### Verificar base de datos directamente
-
-```bash
-psql "host=$PG_SERVER.postgres.database.azure.com \
-      port=5432 \
-      dbname=$PG_DATABASE \
-      user=$PG_ADMIN \
-      password=$PG_PASSWORD \
-      sslmode=require" \
-  -c "SELECT * FROM users; SELECT * FROM gastos;"
-```
+Flujo completo a probar:
+1. Registrar una cuenta nueva (email + contraseña)
+2. Iniciar sesión
+3. Agregar un gasto con monto, descripción y fecha → debe aparecer en el dashboard
+4. Ir a Historial → verificar que aparece en la tabla
+5. Filtrar por mes → verificar que el filtro funciona
+6. Eliminar el gasto → verificar que desaparece
+7. Cerrar sesión y volver a iniciar → los datos deben persistir
 
 ---
 
-## 8. Flujo CI/CD — Cómo Funciona Después del Setup
+## Cómo hacer un redeploy (flujo normal de trabajo)
 
-Una vez configurado, cada `git push` a `main` activa automáticamente:
+Cada vez que se modifica código y se hace push, GitHub Actions despliega automáticamente:
 
-```
+```powershell
+# Modificar algún archivo del backend o frontend
+git add .
+git commit -m "descripcion del cambio"
 git push origin main
-        │
-        ├── Si hay cambios en backend/ → deploy-backend.yml
-        │     1. Build Docker image (backend)
-        │     2. Push a ACR con tag :sha y :latest
-        │     3. Deploy a App Service (zero-downtime swap)
-        │
-        └── Si hay cambios en frontend/ → deploy-frontend.yml
-              1. npm install + npm run build (con VITE_API_URL)
-              2. Deploy a Azure Static Web Apps (CDN global)
 ```
 
----
-
-## 9. Resumen de URLs Finales
-
-| Servicio | URL |
-|---|---|
-| Frontend | `https://<SWA_NAME>.azurestaticapps.net` |
-| Backend API | `https://<WEBAPP_NAME>.azurewebsites.net` |
-| Health check | `https://<WEBAPP_NAME>.azurewebsites.net/` |
-| PostgreSQL | `<PG_SERVER>.postgres.database.azure.com:5432` |
-| ACR | `<ACR_NAME>.azurecr.io` |
+Ir a https://github.com/albertoamas/app-gastos/actions para ver el progreso. Tarda ~3 minutos.
 
 ---
 
-## 10. Comandos de Mantenimiento
+## Comandos de mantenimiento
 
-```bash
-# Ver estado de todos los recursos
-az resource list --resource-group $RESOURCE_GROUP --output table
-
-# Reiniciar backend
-az webapp restart --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME
+```powershell
+# Ver todos los recursos del proyecto
+az resource list --resource-group "rg-gastos-prod" --output table
 
 # Ver logs del backend en tiempo real
-az webapp log tail --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME
+az containerapp logs show `
+  --name "gastos-backend" `
+  --resource-group "rg-gastos-prod" `
+  --follow
 
-# Escalar App Service (si necesitás más recursos)
-az appservice plan update --resource-group $RESOURCE_GROUP --name $APP_SERVICE_PLAN --sku B2
+# Reiniciar el backend
+az containerapp revision restart `
+  --name "gastos-backend" `
+  --resource-group "rg-gastos-prod" `
+  --revision $(az containerapp revision list --name "gastos-backend" --resource-group "rg-gastos-prod" --query "[0].name" -o tsv)
 
-# Apagar App Service para ahorrar crédito (cuando no lo usés)
-az webapp stop --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME
-az webapp start --resource-group $RESOURCE_GROUP --name $WEBAPP_NAME
+# Ver estado de los Container Apps
+az containerapp list `
+  --resource-group "rg-gastos-prod" `
+  --output table
 
-# Eliminar TODO (al final del semestre para no gastar crédito)
-az group delete --name $RESOURCE_GROUP --yes --no-wait
+# Eliminar TODOS los recursos al final del semestre (libera crédito)
+az group delete --name "rg-gastos-prod" --yes --no-wait
 ```
 
 ---
 
-## 11. Nombres y URLs Definitivos
+## Checklist de progreso
 
-| Variable | Valor | URL pública |
-|---|---|---|
-| `ACR_NAME` | `gastosprodacr` | `gastosprodacr.azurecr.io` |
-| `PG_SERVER` | `gastos-pg-prod` | `gastos-pg-prod.postgres.database.azure.com` |
-| `WEBAPP_NAME` | `gastos-backend-svc` | `https://gastos-backend-svc.azurewebsites.net` |
-| `SWA_NAME` | `gastos-frontend-swa` | `https://gastos-frontend-swa.azurestaticapps.net` |
-| `RESOURCE_GROUP` | `rg-gastos-prod` | — |
-
-> Si algún nombre ya está tomado en Azure (error "already exists"), agregar un sufijo numérico corto, ej: `gastosprodacr2`.
-
----
-
-## Checklist de Progreso
-
-- [ ] Fase 1: Cambios en el código (`db.js` + workflows) — commit y push
-- [ ] Fase 2: Crear recursos Azure (ACR, PostgreSQL, App Service, SWA)
-- [ ] Fase 2.5: Inicializar esquema SQL en Azure PostgreSQL
-- [ ] Fase 3: Configurar los 6 secrets en GitHub
-- [ ] Fase 4: Primer deploy manual y verificación del backend
-- [ ] Fase 5: Verificación end-to-end del flujo completo
-- [ ] Primer push automático via CI/CD funciona correctamente
+- [x] Fase 0 — Herramientas instaladas (Azure CLI, Docker, psql)
+- [x] Paso 1.1 — Login en Azure
+- [x] Paso 1.2 — Proveedores registrados (ContainerRegistry, App, DBforPostgreSQL, OperationalInsights)
+- [x] Paso 2.1 — Resource Group creado (`rg-gastos-prod` en eastus)
+- [x] Paso 2.2 — ACR creado (`gastosprodacr`)
+- [x] Paso 2.3 — PostgreSQL creado (`gastos-pg-brs` en brazilsouth, estado: Ready)
+- [x] Paso 2.3b — Base de datos `gastos_db` creada
+- [ ] Paso 2.4 — Firewall de PostgreSQL configurado
+- [ ] Paso 2.5 — Schema SQL inicializado (tablas users y gastos)
+- [ ] Paso 2.6 — Container Apps Environment creado (`gastos-env`)
+- [ ] Paso 2.7 — Imagen del backend subida al ACR
+- [ ] Paso 2.8 — Backend Container App creado y funcionando
+- [ ] Paso 2.9 — Imagen del frontend subida al ACR y frontend Container App creado
+- [ ] Paso 3.1 — Service Principal creado con permisos
+- [ ] Paso 3.2 — 4 secrets configurados en GitHub
+- [ ] Fase 5 — Verificación end-to-end completa

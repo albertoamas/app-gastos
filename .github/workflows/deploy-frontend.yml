@@ -1,5 +1,6 @@
 name: Deploy Frontend
 
+# Se activa cuando hay un push a main con cambios en el frontend
 on:
   push:
     branches: [main]
@@ -7,36 +8,46 @@ on:
       - 'frontend/**'
       - '.github/workflows/deploy-frontend.yml'
 
+env:
+  IMAGE_NAME: gastos-frontend
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    name: Build y Deploy Frontend
 
     steps:
+      # 1. Descargar el código del repositorio
       - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      # 2. Autenticarse en Azure con el Service Principal
+      - name: Login en Azure
+        uses: azure/login@v2
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Build Frontend
-        working-directory: ./frontend
+      # 3. Autenticarse en el Container Registry de Azure
+      - name: Login en ACR
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      # 4. Construir la imagen Docker del frontend
+      #    VITE_API_URL se pasa como build argument para que Vite lo hornee
+      #    en el bundle estático durante el build. Sin este valor, el frontend
+      #    no sabría a qué URL llamar para la API del backend.
+      - name: Build y push imagen Docker
         run: |
-          npm install
-          npm run build
-        env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          docker build \
+            --build-arg VITE_API_URL=${{ secrets.VITE_API_URL }} \
+            -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest \
+            ./frontend
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Deploy a Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "frontend"
-          output_location: "dist"
-          skip_app_build: true
+      # 5. Actualizar el Container App para que use la nueva imagen
+      - name: Deploy a Azure Container Apps
+        run: |
+          az containerapp update \
+            --name "gastos-frontend" \
+            --resource-group "rg-gastos-prod" \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

@@ -1,5 +1,6 @@
 name: Deploy Backend
 
+# Se activa cuando hay un push a main con cambios en el backend
 on:
   push:
     branches: [main]
@@ -15,17 +16,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Descargar el código del repositorio
       - name: Checkout código
         uses: actions/checkout@v4
 
-      - name: Login a Azure
+      # 2. Autenticarse en Azure con el Service Principal
+      - name: Login en Azure
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login a Azure Container Registry
+      # 3. Autenticarse en el Container Registry de Azure
+      - name: Login en ACR
         run: az acr login --name ${{ secrets.ACR_NAME }}
 
+      # 4. Construir la imagen Docker del backend y subirla al ACR
+      #    Se etiqueta con el SHA del commit para tener historial de versiones
       - name: Build y push imagen Docker
         run: |
           docker build \
@@ -35,8 +41,10 @@ jobs:
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Deploy a Azure App Service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-          images: ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      # 5. Actualizar el Container App para que use la nueva imagen
+      - name: Deploy a Azure Container Apps
+        run: |
+          az containerapp update \
+            --name "gastos-backend" \
+            --resource-group "rg-gastos-prod" \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
