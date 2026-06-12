@@ -10,6 +10,8 @@ const pool = new Pool({
   user:     process.env.PGUSER     || 'gastos_user',
   password: process.env.PGPASSWORD || 'gastos_pass',
   database: process.env.PGDATABASE || 'gastos_db',
+  // PGSSL=true requerido para Azure Database for PostgreSQL
+  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 // Verificar conexión al arrancar
