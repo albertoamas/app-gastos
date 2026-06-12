@@ -95,3 +95,5 @@ docker compose down -v
 ## 🤝 Contribucion / Proyecto universitario
 
 Proyecto academico para practicar arquitectura full-stack y buenas practicas de autenticacion y persistencia.
+
+# Alberto Amas
