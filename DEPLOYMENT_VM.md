@@ -66,7 +66,7 @@ git push → GitHub Actions
 | ➤ Región | `East US` |
 | ➤ Opciones de disponibilidad | `No se requiere redundancia` |
 | ➤ Imagen | `Ubuntu Server 22.04 LTS` |
-| ➤ Tamaño | Hacer clic en **Ver todos los tamaños** → buscar y seleccionar `B2s` (2 vCPU, 4 GiB RAM) |
+| ➤ Tamaño | Hacer clic en **Ver todos los tamaños** → buscar y seleccionar `B1ms` (1 vCPU, 2 GiB RAM) |
 
 **Cuenta de administrador:**
 
