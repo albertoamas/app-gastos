@@ -56,6 +56,7 @@ export default function Landing() {
 
       {/* ── Hero ──────────────────────────────── */}
       <section className="landing-hero">
+        <div className="hero-badge">✨ Gratis para siempre</div>
         <h1 className="hero-title">
           Controla tus gastos<br />
           <span className="hero-title-accent">personales en bolivianos</span>
@@ -79,6 +80,27 @@ export default function Landing() {
               </Link>
             </>
           )}
+        </div>
+        <div className="hero-stats">
+          <div className="hero-stat">
+            <span className="hero-stat-value">100%</span>
+            <span className="hero-stat-label">Gratuito</span>
+          </div>
+          <div className="hero-stat-divider" />
+          <div className="hero-stat">
+            <span className="hero-stat-value">Bs</span>
+            <span className="hero-stat-label">En bolivianos</span>
+          </div>
+          <div className="hero-stat-divider" />
+          <div className="hero-stat">
+            <span className="hero-stat-value">🔒</span>
+            <span className="hero-stat-label">Datos privados</span>
+          </div>
+          <div className="hero-stat-divider" />
+          <div className="hero-stat">
+            <span className="hero-stat-value">24/7</span>
+            <span className="hero-stat-label">Disponible</span>
+          </div>
         </div>
       </section>
 
@@ -112,7 +134,11 @@ export default function Landing() {
 
       {/* ── Footer ────────────────────────────── */}
       <footer className="landing-footer">
-        <span>Gastos Personales</span>
+        <span>© {new Date().getFullYear()} Gastos Personales</span>
+        <span>·</span>
+        <Link to="/register" style={{ color: 'inherit', textDecoration: 'none' }}>Crear cuenta</Link>
+        <span>·</span>
+        <Link to="/login" style={{ color: 'inherit', textDecoration: 'none' }}>Iniciar sesión</Link>
       </footer>
     </div>
   );
