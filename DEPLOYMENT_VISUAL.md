@@ -267,11 +267,21 @@ Abrir **PowerShell** en la carpeta del proyecto:
 ```powershell
 # Si psql no está disponible, agregarlo al PATH:
 $env:PATH += ";C:\Program Files\PostgreSQL\16\bin"
-
-# Ejecutar el script SQL (nota: el host usa el nombre nuevo gastos-db-server)
-psql "host=gastos-db-server.postgres.database.azure.com port=5432 dbname=gastos_db user=gastosadmin password=G4st0s#Prod2024! sslmode=require" -f backend/init.sql
-# Nota: el host es siempre gastos-db-server.postgres.database.azure.com sin importar la región elegida (Brazil South o Chile Central)
 ```
+
+> **Importante para Windows:** En PowerShell el string de conexión con comillas causa problemas. Usar siempre los parámetros separados con `-h`, `-p`, `-U`, `-d`.
+
+Ejecutar el script que crea las tablas (pedirá la contraseña):
+```powershell
+psql -h gastos-db-server.postgres.database.azure.com -p 5432 -U gastosadmin -d gastos_db -f "C:\ruta\a\tu\proyecto\backend\init.sql"
+```
+
+Reemplazar `C:\ruta\a\tu\proyecto` con la ruta real donde clonaste el repositorio. Ejemplo:
+```powershell
+psql -h gastos-db-server.postgres.database.azure.com -p 5432 -U gastosadmin -d gastos_db -f "C:\Users\cceci\Documents\Gastos\backend\init.sql"
+```
+
+Cuando pida contraseña escribir: `G4st0s#Prod2024!`
 
 Resultado esperado:
 ```
@@ -281,15 +291,16 @@ CREATE TABLE
 
 Verificar que las tablas existen:
 ```powershell
-psql "host=gastos-db-server.postgres.database.azure.com port=5432 dbname=gastos_db user=gastosadmin password=G4st0s#Prod2024! sslmode=require" -c "\dt"
+psql -h gastos-db-server.postgres.database.azure.com -p 5432 -U gastosadmin -d gastos_db -c "\dt"
 ```
 
 Resultado esperado:
 ```
- Esquema | Nombre | Tipo  
----------+--------+-------
- public  | gastos | tabla 
- public  | users  | tabla 
+        List of relations
+ Schema | Name   | Type  | Owner
+--------+--------+-------+-------------
+ public | gastos | table | gastosadmin
+ public | users  | table | gastosadmin
 ```
 
 ---
